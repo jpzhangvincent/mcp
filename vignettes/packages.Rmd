@@ -47,14 +47,14 @@ This is a list of other functions, which I find useful on other statistics packa
 library(mcp)
 ```
 
- * Manually specify the segment structure. Other packages allow for specifying segment structure, but it has to be shared for all segments. Read more about [the formula syntax](../docs/articles/formulas.html) in `mcp`.
+ * Manually specify the segment structure. Other packages allow for specifying segment structure, but it has to be shared for all segments. Read more about [the formula syntax](../articles/formulas.html) in `mcp`.
  * Posterior distribution for each change point. This matters since they rarely conform to known distributions so confidence intervals can be misleading.
- * *varying change points*: To my knowledge, no other package implements varying change points, i.e., allowing by-group differences in change points while sharing all other parameters. Read more about [varying change points](../docs/articles/varying.html) in `mcp`.
- * *Sharing and fixing parameters* to values and other parameters as discussed under [priors in mcp](../docs/articles/priors.html).
+ * *varying change points*: To my knowledge, no other package implements varying change points, i.e., allowing by-group differences in change points while sharing all other parameters. Read more about [varying change points](../articles/varying.html) in `mcp`.
+ * *Sharing and fixing parameters* to values and other parameters as discussed under [priors in mcp](../articles/priors.html).
  * *Per-segment regression on variance and autocorrelation* via the `sigma()` ([read more here](../articles/variance.html)) and `ar()` ([read more here](../articles/arma.html)) terms, also allowing for more advanced change points involving, e.g., a change in autocorrelation strength.
- * *Explicit priors*: `bcp` is the only other Bayesian change point package I know of. It contains a few high-level prior parameters, but not for specific parameters such as *where* change points are expected to occur etc. Read more about [priors in mcp](../docs/articles/priors.html) for more.
+ * *Explicit priors*: `bcp` is the only other Bayesian change point package I know of. It contains a few high-level prior parameters, but not for specific parameters such as *where* change points are expected to occur etc. Read more about [priors in mcp](../articles/priors.html) for more.
  * *Prior and posterior predictive checks*. In general, most other packages have limited or no model checking functionality. The default `plot.mcpfit` is inherently a visual predictive check and can be applied to priors (`mcp(..., sample = "prior")` and posteriors. Of course inspecting Gelman-Rubin statistics and effective sample sizes in `summary.mcpfit`, as well as trace plots (`plot_pars(fit, type = "trace")`), also go a long way.
- * Flexible hypothesis testing using `loo` and `hypothesis`, including testing the existence of a change point. Most other packages stop at estimation, though some provide p-values. Read more about [hypothesis testing and model comparison](../docs/articles/comparison.html) using `mcp`.
+ * Flexible hypothesis testing using `loo` and `hypothesis`, including testing the existence of a change point. Most other packages stop at estimation, though some provide p-values. Read more about [hypothesis testing and model comparison](../articles/comparison.html) using `mcp`.
 
 
 # Recommendation
@@ -189,7 +189,7 @@ While `segmented` prefers the one-change-point model, `mcp` prefers the (true) t
 
 
 
-# breakpoints
+# strucchange::breakpoints
 `strucchange::breakpoints()` is a lot like `segmented`. The difference is that (1) it is limited to gaussian residuals, and (2) it actually models intercepts, quadratic terms, etc. It scans through fits with 1, 2, 3,... N break points and determine where the optimal break points between this number of segments would lie. For each model it computes the Residual Sum of Squares (RSS; monotonically smaller with increasing N) and the Bayesian Information Criterion (BIC; has a minimum) for each N. It selects the model with the smallest BIC.
 
 For an intercept-only model (`y ~ 1`) it correctly detects the two change points with estimates similar to `mcp`. As with most other packages, there are no intervals on the change points nor estimates of the parameters of the segments in between.
@@ -299,15 +299,6 @@ TSMCP::tsmcplm(df$y, X = NULL, method = "adapt", c = 1)
 
 
 
-# wbsts
-The `wbsts` package is focused at time-series data. I must admit that I have not taken the time to understand the underlying model(s) or inference methods, so I am in a poor position to evaluate whether I am using it correctly. It returns no change points for the present data set using default settings:
-
-```{r}
-wbsts::wbs.lsw(df$y)
-```
-
-
-
 
 # robts::changerob
 `robts` is about robust time-series regression. It is not on CRAN, so it has to be installed using `install.packages("robts", repos="http://R-Forge.R-project.org")`. I fail to install the dependencies, and development of the package seems to have stopped around 2014. It won't be covered further here.
@@ -323,7 +314,7 @@ wbsts::wbs.lsw(df$y)
 
 
 # Packages doing only fixed change points
-As explained in [../docs/articles/formulas.html], fixed change points can be implemented in almost all regression functions. You simply have an indicator variable saying whether there has been as shift at the corresponding x-value and use it like `lm(y ~ 1 + x * I(x > 30), data = df)`. Or if you don't want a carry-over effect from the first segment, do `lm(y ~ 1 * I(x < 30) + x * I(x >= 30), data = df)`. This will work for most regression packages in R, including `survival` and `lme4`.
+As explained in [the article on mcp formulas](../articles/formulas.htm), fixed change points can be implemented in almost all regression functions. You simply have an indicator variable saying whether there has been as shift at the corresponding x-value and use it like `lm(y ~ 1 + x * I(x > 30), data = df)`. Or if you don't want a carry-over effect from the first segment, do `lm(y ~ 1 * I(x < 30) + x * I(x >= 30), data = df)`. This will work for most regression packages in R, including `survival` and `lme4`.
 
 Some packages include this in a way where you don't have to code your indicators yourself, including:
 
@@ -333,5 +324,36 @@ Some packages include this in a way where you don't have to code your indicators
 # Others
 I have yet to test these: 
  
- * `TSIS` may be coerced to do change point analysis, though it is mean for much more complicated switch point models in gene expression analysis. It's primary interface is a Shiny App.
+ * `TSIS` and `segmenTier` may be coerced to do change point analysis, though it is mean for much more complicated switch point models in gene expression analysis. It's primary interface is a Shiny App.
  * `plrs::plrs`. Piecewise Linear Regression, targeted at DNA and gene expression. May also be coerced into simpler problems.
+ * Packages that went under my radar initially: `ChangepointTesting`, `changepoint.mv`, `changepointsHD`, `changepointsVar`, `InspectChangepoint`, `breakpoint`, `segmentr`, `Segmentor3IsBack`, `trendsegmentR`, `BayesPiecewiseICAR`, `BayesPieceHazSelect`
+
+
+<!--
+library(not)
+set.seed(42)
+df = data.frame(
++   x = 1:100,
++   y = c(rnorm(30, 2), rnorm(40, 0), rnorm(30, 1))
++ )
+x <- df$y
+ts.plot(predict(not(x, rand.intervals=F, intervals=all.intervals(length(x)))))
+
+You will see that the two change-points are correctly estimated.
+
+Please see below for some other packages and non-packaged code:
+
+https://cran.r-project.org/web/packages/breakfast/index.html (this package is undergoing a major re-write and will incorporate many more methods; please check back in July)
+
+https://cran.r-project.org/web/packages/IDetect/index.html
+
+https://cran.r-project.org/web/packages/trendsegmentR/index.html
+
+https://github.com/pfryz/wild-binary-segmentation-2.0 [this will be part of the “breakfast” package soon]
+
+https://cran.r-project.org/web/packages/mosum/index.html
+
+These and some other latest packages are reviewed e.g. in http://stats.lse.ac.uk/fryzlewicz/wbs2/wbs2sdll.pdf.
+
+Finally, if I may comment on one of the packages listed in your blog post: “wbsts” segments the autocovariance structure of a time series (not its mean!) so is unsuitable for your running example and should not be used on it.
+-->

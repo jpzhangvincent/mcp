@@ -15,7 +15,7 @@ License: GPL-2
 Encoding: UTF-8
 Language: en-US
 LazyData: true
-RoxygenNote: 7.0.2
+RoxygenNote: 7.1.1
 Roxygen: list(markdown = TRUE)
 Depends: R (>= 3.5.0)
 Imports:
@@ -26,8 +26,8 @@ Imports:
 	coda (>= 0.19.3),
 	loo (>= 2.1.0),
 	bayesplot (>= 1.7.0),
-	tidybayes (>= 1.1.0),
-	dplyr (>= 0.8.3),
+	tidybayes (>= 2.0.3),
+	dplyr (>= 1.0.0),
 	magrittr (>= 1.5),
 	tidyr (>= 1.0.0),
 	tidyselect (>= 0.2.5),

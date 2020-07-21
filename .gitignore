@@ -1,5 +1,6 @@
 .Rproj.user
 .Rhistory
+.Rprofile
 inst/doc
 vignettes/binomial_cache
 vignettes/comparison_cache
@@ -10,3 +11,6 @@ vignettes/varying_cache
 vignettes/variance_cache
 vignettes/arma_cache
 fix_twittercard.R
+renv.lock
+renv
+revdep

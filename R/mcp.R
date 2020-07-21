@@ -66,21 +66,23 @@
 #'       prior strings (fit$prior), the JAGS model (fit$jags_code), etc.
 #' @param cores Positive integer or "all". Number of cores.
 #'
-#'   * `1`: serial sampling
+#'   * `1`: serial sampling (Default). `options(mc.cores = 3)` will dominate `cores = 1`
+#'     but not larger values of `cores`.
 #'   * `>1`: parallel sampling on this number of cores. Ideally set `chains`
 #'     to the same value. Note: `cores > 1` takes a few extra seconds the first
 #'     time it's called but subsequent calls will start sampling immediately.
 #'   * `"all"`: use all cores but one and sets `chains` to the same value. This is
 #'     a convenient way to maximally use your computer's power.
 #' @param chains Positive integer. Number of chains to run.
-#' @param iter Positive integer. Number of post-warmup samples to draw.
+#' @param iter Positive integer. Number of post-warmup samples to draw. The number
+#'   of iterations per chain is `iter/chains`.
 #' @param adapt Positive integer. Also sometimes called "burnin", this is the
 #'   number of samples used to reach convergence. Set lower for greater speed.
 #'   Set higher if the chains haven't converged yet or look at [tips, tricks, and debugging](https://lindeloev.github.io/mcp/articles/tips.html).
 #' @param inits A list if initial values for the parameters. This can be useful
 #'   if a model fails to converge. Read more in \code{\link[rjags]{jags.model}}.
 #'   Defaults to `NULL`, i.e., no inits.
-#' @param jags_code Pass JAGS code to `mcp` to use directly. This is useful if
+#' @param jags_code String. Pass JAGS code to `mcp` to use directly. This is useful if
 #'   you want to tweak the code in `fit$jags_code` and run it within the `mcp`
 #'   framework.
 #' @details Notes on priors:
@@ -175,8 +177,11 @@ mcp = function(model,
   ################
 
   # Check data
-  if (is.null(data) & !(sample %in% c(FALSE, "none")))
+  if (is.null(data) & sample %in% c("post", "both"))
     stop("Cannot sample without data.")
+
+  if (is.null(data) & sample == "prior")
+    stop("Cannot sample prior without data as some default priors depend on data. Possible solution: set priors to be independent of data (no SDY, MEANX, etc.) and provide a bit of mock-up data, which then will have no effect.")
 
   if (!is.null(data)) {
     if (!is.data.frame(data) & !tibble::is_tibble(data))
@@ -207,21 +212,9 @@ mcp = function(model,
 
   # Check and recode family
   if (class(family) != "family")
-    stop("`family` must be one of gaussian() or binomial()")
+    stop("`family` is not a valid family. Should be gaussian(), binomial(), etc.")
 
-  if (!family$family %in% c("gaussian", "binomial", "bernoulli", "poisson"))
-    stop("`family` must be one of gaussian(), binomial(), or bernoulli()")
-
-  if (family$family == "gaussian" & !family$link %in% c("identity"))
-    stop("'identity' is currently the only supported link function for gaussian().")
-
-  if (family$family %in% c("binomial", "bernoulli") & !family$link %in% c("logit"))
-    stop("'logit' is currently the only supported link function for binomial() and bernoulli().")
-
-  if (family$family == "poisson" & !family$link %in% c("log"))
-    stop("'log' is currently the only supported link function for poisson().")
-
-  family = get_family(family$family, family$link)  # convert to mcp family
+  family = mcp_family(family)  # convert to mcp family
 
 
   # Check other stuff
@@ -240,6 +233,15 @@ mcp = function(model,
 
   if (cores > chains)
     message("`cores` is greater than `chains`. Not all cores will be used.")
+
+  # jags_code
+  if(!is.null(jags_code)) {
+    if (!is.character(jags_code)) {
+      stop("`jags_code` must be NULL or a string with a JAGS model, including 'model {...}'.")
+    } else if(!stringr::str_detect(gsub(" ", "", jags_code), "model\\{")) {
+      stop("`jags_code` must be NULL or a string with a JAGS model, including 'model {...}'.")
+    }
+  }
 
   # Parallel fails on R version 3.6.0 and lower (sometimes at least).
   if (cores > 1 & getRversion() < "3.6.1")
@@ -283,11 +285,12 @@ mcp = function(model,
   formula_str_sim = get_all_formulas(ST, prior, pars$x, ytypes = c("ct", "sigma", "arma"))
   simulate = get_simulate(formula_str_sim, pars, nrow(ST), family)
 
-  # Make jags code
-  max_arma_order = get_arma_order(pars$arma)
-  formula_str_jags = get_all_formulas(ST, prior, pars$x)
-  jags_code_generated = get_jagscode(prior, ST, formula_str_jags, max_arma_order, family, sample)
-  jags_code = ifelse(is.null(jags_code), yes = jags_code_generated, no = jags_code)  # Get from user?
+  # Make jags code if it is not provided by the user
+  if (is.null(jags_code)) {
+    max_arma_order = get_arma_order(pars$arma)
+    formula_str_jags = get_all_formulas(ST, prior, pars$x)
+    jags_code = get_jagscode(prior, ST, formula_str_jags, max_arma_order, family, sample)
+  }
 
 
   ##########

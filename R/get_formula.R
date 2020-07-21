@@ -148,7 +148,7 @@ get_formula_str = function(ST, par_x, ytype = "ct", init = FALSE) {
       if (ytype == "ct") {
         formula_str = paste0(formula_str, "\n\n# Fitted value\ny_[i_] = \n")
       } else if (ytype == "sigma") {
-        formula_str = paste0(formula_str, "# Fitted standard deviation\nsigma_[i_] = \n")
+        formula_str = paste0(formula_str, "# Fitted standard deviation\nsigma_[i_] = max(0, \n")  # Add max(0, [formula]) to prevent modeling negative sigmas. JAGS uses precision = 1 / sigma^2 which yields positive precisions for negative sigmas.
       } else if (stringr::str_detect(ytype, "ar[0-9]+")) {
         formula_str = paste0(formula_str, "# Autoregressive coefficient for all AR(", ar_order,")\n", ytype, "_[i_] = \n")
       } else if (stringr::str_detect(ytype, "ma[0-9]+")) {
@@ -200,6 +200,10 @@ get_formula_str = function(ST, par_x, ytype = "ct", init = FALSE) {
   # Remove all "unrealized" FUTURE_REL
   formula_str = gsub("FUTURE_REL", "", formula_str)
 
+  if (ytype == "sigma") {
+    formula_str = paste0(formula_str, ")")  # End max() statement
+  }
+
   # Return
   formula_str
 }
@@ -223,7 +227,8 @@ get_formula_str = function(ST, par_x, ytype = "ct", init = FALSE) {
 get_simulate = function(formula_str, pars, nsegments, family) {
   # First some substitutions
   formula_func = gsub("\\[i_\\]", "", formula_str)  # No explicit indexing needed for R function
-  formula_func = gsub("min\\(", "pmin\\(", formula_func)  # vectorized mean for function
+  formula_func = gsub("min\\(", "pmin\\(", formula_func)  # vectorized min
+  formula_func = gsub("max\\(", "pmax\\(", formula_func)  # vectorized max
   for (i in seq_len(nsegments)) {
     formula_func = gsub(paste0("CP_", i, "_INDEX"), "", formula_func)  # Use vector of data
   }
@@ -257,13 +262,18 @@ get_simulate = function(formula_str, pars, nsegments, family) {
     args_if_exists(pars$sigma),
     args_if_exists(pars$arma),
     args_if_exists(pars$varying, " = 0"),
-    ifelse(is_arma, paste0("\n    ", pars$y, " = NULL, \n    ydata = NULL, "), ""), "
+    ifelse(is_arma, paste0("\n    ", pars$y, " = NULL, \n    .ydata = NULL, "), ""), "
     type = 'predict',
     quantile = FALSE,
     rate = FALSE,
     which_y = 'ct',
     add_attr = TRUE,
+    arma = TRUE,
     ...) {
+
+    # Return predictions or fitted values?
+    if (!type %in% c('predict', 'fitted'))
+      stop(\"'`type` must be one of 'predict' or 'fitted'\")
 
     # Use this for return to add simulation parameters to the output
     args_names = as.list(match.call())  # Which arguments this function was called with
@@ -286,29 +296,27 @@ get_simulate = function(formula_str, pars, nsegments, family) {
     cp_0 = -Inf
     cp_", nsegments, " = Inf
 
-    ", formula_func, "
-
-
-    # Return predictions or fitted values?
-    if (!type %in% c('predict', 'fitted'))
-      stop(\"'`type` must be one of 'predict' or 'fitted'\")
-    ")
+    ", formula_func)
 
   # Return depends on family
+  # GAUSSIAN ------------------------------
   if (family$family == "gaussian") {
     # If ARMA, build resid_ and return with that
     if (is_arma) {
       out = paste0(out, "
-      # Simulate AR residuals",
-        get_ar_code(
-          ar_order = get_arma_order(pars$arma),
-          family = family,
-          is_R = TRUE,
-          xvar = pars$x,
-          yvar = pars$y
-        ), "
-      # Finally, add these autocorrelated predictions to the fitted y_:
-      y_ = y_ + resid_
+
+      if (arma == TRUE) {
+        # Simulate AR residuals",
+          get_ar_code(
+            ar_order = get_arma_order(pars$arma),
+            family = family,
+            is_R = TRUE,
+            xvar = pars$x,
+            yvar = pars$y
+          ), "
+        # Finally, add these autocorrelated predictions to the fitted y_:
+        y_ = y_ + resid_
+      }
     ")
     }
 
@@ -327,58 +335,62 @@ get_simulate = function(formula_str, pars, nsegments, family) {
         stop('`type = \\'fitted\\` is the only option when `which_y != \\'ct\\'`')
 
       return(add_simulated(get(which_y)))
+    }")
+
+    if (is_arma) {
+      out = paste0(out, "
+   if (is.null(", pars$y, ") & is.null(.ydata) & arma == TRUE)
+     message('Returning without AR(N) since `", pars$y, "` was not in the data.')")
     }
 
-    # If fitted or no data (will)
-    if (type == 'fitted') {")
-      if (is_arma) {
-        out = paste0(out, "
-      if (is.null(", pars$y, ") & is.null(ydata))
-        stop('fitted not meaningful for an AR(N) model without data to use for autocorrelation.')")
-      }
+    # If fitted or no data
     out = paste0(out, "
-      return(add_simulated(y_))
+    if (type == 'fitted') {
+      return(add_simulated(", family$linkinv_r, "(y_)))
     }")
-    if(is_arma) {
-      out = paste0(out, "else if (type == 'predict' & (is.null(ydata) & is.null(", pars$y, "))) {
-      return(add_simulated(y_))
+    out = paste0(out, " else if (type == 'predict') {
+      if (any(", family$linkinv_r, "(sigma_) < 0))
+        stop('Modelled negative sigma. First detected at ", pars$x, " = ', min(", pars$x, "[", family$linkinv_r, "(sigma_) < 0]))
+      return(add_simulated(rnorm(length(", pars$x, "), ", family$linkinv_r, "(y_), sigma_)))
     }")
-    }
-    out = paste0(out, "else if (type == 'predict') {
-      if (any(sigma_ < 0))
-        stop('Modelled negative sigma, which is impossible. First detected at ", pars$x, " = ', min(", pars$x, "[sigma_ < 0]))
-      return(add_simulated(rnorm(length(", pars$x, "), y_, sigma_)))
-      # return(add_simulated(qnorm(length(", pars$x, "), y_, sigma_)))
-      # if (is.numeric(quantile)) {
-      #   add_simulated(qnorm(quantile, y_, sigma_))
-      # } else if (quantile == FALSE) {
-      #   add_simulated(rnorm(length(", pars$x, "), y_, sigma_))
-      # } else {
-      #   stop('Invalid `quantile` argument to simulate()')
-      # }
-    }")
+
+    # return(add_simulated(qnorm(length(", pars$x, "), ", family$linkinv_r, "(y_), sigma_)))
+    # if (is.numeric(quantile)) {
+    #   add_simulated(qnorm(quantile, ", family$linkinv_r, "(y_), sigma_))
+    # } else if (quantile == FALSE) {
+    #   add_simulated(rnorm(length(", pars$x, "), ", family$linkinv_r, "(y_), sigma_))
+    # } else {
+    #   stop('Invalid `quantile` argument to simulate()')
+    # }
+
+  # OTHER FAMILIES ---------------------
   } else if (family$family == "binomial") {
     out = paste0(out, "
     if (type == 'predict') {
-      if (rate == FALSE) return(add_simulated(rbinom(length(", pars$x, "), ", pars$trials, ", ilogit(y_))))
-      if (rate == TRUE)  return(add_simulated(rbinom(length(", pars$x, "), ", pars$trials, ", ilogit(y_)) / ", pars$trials, "))
+      if (rate == FALSE) return(add_simulated(rbinom(length(", pars$x, "), ", pars$trials, ", ", family$linkinv_r, "(y_))))
+      if (rate == TRUE)  return(add_simulated(rbinom(length(", pars$x, "), ", pars$trials, ", ", family$linkinv_r, "(y_)) / ", pars$trials, "))
     } else if (type == 'fitted') {
-      if (rate == FALSE) return(add_simulated(", pars$trials, " * ilogit(y_)))
-      if (rate == TRUE)  return(add_simulated(ilogit(y_)))
+      if (rate == FALSE) return(add_simulated(", pars$trials, " * ", family$linkinv_r, "(y_)))
+      if (rate == TRUE)  return(add_simulated(", family$linkinv_r, "(y_)))
     }")
   } else if (family$family == "bernoulli") {
     out = paste0(out, "
-    if (type == 'predict') return(add_simulated(rbinom(length(", pars$x, "), 1, ilogit(y_))))
-    if (type == 'fitted') return(add_simulated(ilogit(y_)))")
+    if (type == 'predict') return(add_simulated(rbinom(length(", pars$x, "), 1, ", family$linkinv_r, "(y_))))
+    if (type == 'fitted') return(add_simulated(", family$linkinv_r, "(y_)))")
   } else if (family$family == "poisson") {
     out = paste0(out, "
     if (type == 'predict') {
-      if (any(exp(y_) > 2146275819))
-        stop('Modelled extremely large value: exp(", pars$y, ") > 2146275819. First detected at ", pars$x, " = ', min(", pars$x, "[exp(y_) > 2146275819]))
-      return(add_simulated(rpois(length(", pars$x, "), exp(y_))))
+      if (any(", family$linkinv_r, "(y_) > 2146275819))
+        stop('Modelled extremely large value: ", family$linkinv_r, "(", pars$y, ") > 2146275819. First detected at ", pars$x, " = ', min(", pars$x, "[", family$linkinv_r, "(y_) > 2146275819]))
+      return(add_simulated(rpois(length(", pars$x, "), ", family$linkinv_r, "(y_))))
     } else if (type == 'fitted') {
-        return(add_simulated(exp(y_)))
+        return(add_simulated(", family$linkinv_r, "(y_)))
       }")
+  } else if (family$family == "exponential") {
+    out = paste0(out, "
+    if (type == 'predict') return(add_simulated(rexp(length(", pars$x, "),", family$linkinv_r, "(y_))))
+    if (type == 'fitted') return(add_simulated(1 / ", family$linkinv_r, "(y_)))
+      ")
   }
 
   out = paste0(out, "
@@ -414,7 +426,7 @@ get_ar_code = function(ar_order, family, is_R, xvar, yvar = NA) {
   if (is_R) {
     # mm is the code string to be populated below
     mm = paste0("
-      if(!is.null(ydata)) ", yvar, " = ydata  # Hack to get a consistent argument name
+      if(!is.null(.ydata)) ", yvar, " = .ydata  # Hack to get a consistent argument name
       ar0_ = sigma_[1:", ar_order, "] * 0 + 1
 
       # If got y. Use it to compute residuals

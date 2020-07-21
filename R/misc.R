@@ -4,76 +4,109 @@
 #' @param link Link function.
 #' @export
 #'
-
 bernoulli = function(link = "logit") {
-  get_family("bernoulli", link)
+  # Just copy binomial()
+  family = binomial(link = link)
+  family$family = "bernoulli"
+  mcp_family(family)
+}
+
+#' Exponential family for mcp
+#'
+#' @aliases exponential
+#' @param link Link function
+#' @export
+#'
+exponential = function(link = "identity") {
+  if (link != "identity")
+    stop("Only link = 'identity' is currently supported for the exponential() family in mcp.")
+
+  family = list(
+    family = "exponential",
+    link = "identity",  # on lambda
+    linkfun = identity,  # on lambda
+    linkinv = identity  # on lambda
+  )
+  class(family) = "family"
+  family = mcp_family(family)
 }
 
 
-#' A family object to store link functions between R and JAGS.
+#' Add A family object to store link functions between R and JAGS.
 #'
 #' This will make more sense once more link functions / families are added.
 #'
-#' @aliases get_family
+#' @aliases mcp_family
 #' @keywords internal
-#' @param name Name of the family
-#' @param link Link function name. Accepts "logit", "log", and "identity"
-get_family = function(name, link) {
-  # Exciting!
-  if (link == "logit") {
-    out = list(
-      family = name,
-      link = "logit",
-      link_jags = "logit",
-      link_r = "logit",  # included in mcp
-      linkinv_jags = "ilogit",
-      linkinv_r = "ilogit"  # included in mcp
-    )
+#' @param family A family object, e.g., `binomial(link = "identity")`.
+mcp_family = function(family) {
+  if (family$link == "logit") {
+    family$link_jags = "logit"
+    family$link_r = "logit"  # included in mcp
+    family$linkinv_jags = "ilogit"
+    family$linkinv_r = "ilogit"  # included in mcp
   }
 
-  # Pretty boring
-  if (link == "log") {
-    out = list(
-      family = name,
-      link = "log",
-      link_jags = "log",
-      link_r = "log",
-      linkinv_jags = "exp",
-      linkinv_r = "exp"
-    )
+  if (family$link == "probit") {
+    family$link_jags = "probit"
+    family$link_r = "probit"  # included in mcp
+    family$linkinv_jags = "phi"
+    family$linkinv_r = "iprobit"  # included in mcp
   }
 
-  # Pretty boring
-  if (link == "identity") {
-    out = list(
-      family = name,
-      link = "identity",
-      link_jags = "",
-      link_r = "",
-      linkinv_jags = "",
-      linkinv_r = ""
-    )
+  if (family$link == "log") {
+    family$link_jags = "log"
+    family$link_r = "log"
+    family$linkinv_jags = "exp"
+    family$linkinv_r = "exp"
   }
 
-  class(out) = "family"
-  return(out)
+  # Identity is just the absence of a function
+  if (family$link == "identity") {
+    family$link_jags = ""
+    family$link_r = ""
+    family$linkinv_jags = ""
+    family$linkinv_r = ""
+  }
+
+  return(family)
 }
 
+
+
+#' Logit function
+#'
+#' @aliases logit
+#' @param mu A vector of probabilities (0.0 to 1.0)
+#' @return A vector with same length as `mu`
+#' @export
+logit = stats::binomial(link = "logit")$linkfun
 
 #' Inverse logit function
 #'
 #' @aliases ilogit
 #' @param eta A vector of logits
 #' @return A vector with same length as `eta`
+#' @export
 ilogit = stats::binomial(link = "logit")$linkinv
 
-#' Logit function
-#'
-#' @aliases logit
-#' @param mu A vector of probabilities (0-1)
-#' @return A vector with same length as `mu`
-logit = stats::binomial(link = "logit")$linkfun
 
+#' Probit function
+#'
+#' @aliases probit
+#' @param mu A vector of probabilities (0.0 to 1.0)
+#' @return A vector with same length as `mu`
+#' @export
+probit = stats::binomial(link = "probit")$linkfun
+
+
+#' Inverse probit function
+#'
+#' @aliases iprobit
+#' @param eta A vector of probits
+#' @return A vector with same length as `mu`
+#' @export
+iprobit = stats::binomial(link = "probit")$linkinv
 
 
 #' Converts logical(0) to null. Returns x otherwise
@@ -119,6 +152,7 @@ get_arma_order = function(pars_arma) {
 #' @param lower the smallest allowed value. lower = 1 checks for positive integers.
 #'
 check_integer = function(x, name, lower = -Inf) {
+  x = stats::na.omit(x)
   greater_than = ifelse(lower == -Inf, " ", paste0(" >= ", lower, " "))
   if (!is.numeric(x))
     stop("Only integers", greater_than, "allowed for '", name, "'")
@@ -128,7 +162,6 @@ check_integer = function(x, name, lower = -Inf) {
 
   TRUE
 }
-
 
 
 # Ask reminder questions for CRAN export
@@ -141,8 +174,6 @@ release_questions = function() {
     "Have you run the script to insert the correct logo.png in the HTML meta?"
   )
 }
-
-
 
 
 #' Remove varying or population terms from a formula
@@ -184,4 +215,56 @@ remove_terms = function(form, remove) {
     formula_str = paste0("~", formula_terms)
     return(stats::as.formula(formula_str, env=globalenv()))
   }
+}
+
+
+#' Takes any formula-like input and returns a formula
+#' @aliases to_formula
+#' @keywords internal
+#' @param form Formula or character (with or without initial tilde/"~")
+#' @return A formula
+#' @encoding UTF-8
+#' @author Jonas Kristoffer Lindeløv \email{jonas@@lindeloev.dk}
+to_formula = function(form) {
+  if (is.character(form)) {
+    # Add tilde
+    if (!stringr::str_detect(form, "^(\\s|)~")) {
+      form = paste0("~", form)
+    }
+    form = stats::as.formula(form)
+  } else if (!rlang::is_formula(form)) {
+    stop("`form` must character or formula but got ", form)
+  }
+
+  return(form)
+}
+
+#' Expand samples with quantiles
+#'
+#' @aliases get_quantiles
+#' @keywords internal
+#' @inheritParams plot.mcpfit
+#' @param samples A tidybayes tibble
+#' @param quantiles Vector of quantiles (0.0 to 1.0)
+#' @param xvar An rlang::sym() with the name of the x-col in `samples`
+#' @param yvar An rlang::sym() with the name of the response col in `samples`
+#' @return A tidybayes long format tibble with the column "quantile"
+#' @encoding UTF-8
+#' @author Jonas Kristoffer Lindeløv \email{jonas@@lindeloev.dk}
+#'
+get_quantiles = function(samples, quantiles, xvar, yvar, facet_by = NULL) {
+  # Trick to declare no facet = common group for all
+  if (is.null(facet_by))
+    facet_by = xvar
+
+  # Return data with added quantiles
+  samples %>%
+    tidyr::expand_grid(quantile = quantiles) %>%
+
+    # Now compute the quantile for each parameter, quantile, and (optionally) facet:
+    dplyr::group_by(!!xvar, .data$quantile) %>%
+    dplyr::group_by(!!rlang::sym(facet_by), .add = TRUE) %>%
+    dplyr::summarise(
+      y = stats::quantile(!!yvar, probs = .data$quantile[1])
+    )
 }
